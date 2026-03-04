@@ -24,8 +24,9 @@ python main.py
 
 ## Scheduled runs (macOS launchd)
 
-- Primary run: daily at `12:01 AM`
-- Backup run: daily at `12:00 PM` (only runs if today has no successful primary run)
+- Primary run target: daily at `00:01 UTC` (GMT)
+- Backup run target: daily at `12:00 UTC` (GMT), only if no successful primary run on the same UTC date
+- `launchd` triggers hourly; `run_daily.sh` enforces the exact UTC time gate
 - Log cleanup: rotates logs every 90 days
 
 ```bash

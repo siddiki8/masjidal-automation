@@ -163,7 +163,6 @@ def navigate_to_donation_page(driver: webdriver.Chrome, donation_url: Optional[s
             time.sleep(3)
 
     detail = donation_url if donation_url else "menu click only"
-    save_debug_artifacts(driver, "navigate_to_donation_failed")
     raise TimeoutException(
         f"Failed to navigate to donation page within {timeout_seconds}s using {detail}."
     ) from last_error
@@ -193,7 +192,6 @@ def download_csv(driver: webdriver.Chrome, target_url: str, download_dir: Path) 
             time.sleep(2)
 
     if select_element is None:
-        save_debug_artifacts(driver, "date_filter_not_found")
         raise TimeoutException(
             f"Date filter not found at XPath: {date_select_xpath}. Current URL: {driver.current_url}"
         ) from last_error
@@ -251,28 +249,99 @@ def download_csv(driver: webdriver.Chrome, target_url: str, download_dir: Path) 
                 return newest
         time.sleep(1)
 
-    save_debug_artifacts(driver, "csv_download_timeout")
     raise TimeoutException("CSV download did not complete within 60 seconds after export click.")
+
+
+def _normalize_recurring(value: object) -> str:
+    text = str(value).strip().lower()
+    if text in {"recurring", "y", "yes", "true", "1"}:
+        return "Y"
+    return "N"
+
+
+def _normalize_payment_type(value: object) -> str:
+    text = str(value).strip().lower()
+    mapping = {
+        "card": "Credit Card",
+        "credit card": "Credit Card",
+        "cash": "Cash",
+        "bank transfer": "Bank Transfer/EFT",
+        "eft": "Bank Transfer/EFT",
+        "bank transfer/eft": "Bank Transfer/EFT",
+        "bank": "Bank Transfer/EFT",
+    }
+    return mapping.get(text, str(value).strip())
+
+
+def _build_keela_dataframe(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
+    if not mapping_csv.exists():
+        raise FileNotFoundError(f"Field mapping file not found: {mapping_csv}")
+
+    mapping_df = pd.read_csv(mapping_csv).fillna("")
+    if "MasjidAl Field" not in mapping_df.columns or "Keela Field" not in mapping_df.columns:
+        raise ValueError("Mapping CSV must contain 'MasjidAl Field' and 'Keela Field' columns.")
+
+    output_columns: dict[str, pd.Series] = {}
+    keela_to_source: dict[str, str] = {}
+    for _, row in mapping_df.iterrows():
+        source_col = str(row["MasjidAl Field"]).strip()
+        keela_col = str(row["Keela Field"]).strip()
+        if not source_col or not keela_col:
+            continue
+        keela_to_source[keela_col] = source_col
+        if source_col in df.columns:
+            output_columns[keela_col] = df[source_col]
+        else:
+            output_columns[keela_col] = pd.Series([""] * len(df), index=df.index)
+
+    keela_df = pd.DataFrame(output_columns)
+
+    if "Recurring" in keela_df.columns:
+        keela_df["Recurring"] = keela_df["Recurring"].apply(_normalize_recurring)
+
+    if "Payment Type" in keela_df.columns:
+        keela_df["Payment Type"] = keela_df["Payment Type"].apply(_normalize_payment_type)
+
+    if "Date of Gift" in keela_df.columns:
+        source_col = keela_to_source.get("Date of Gift", "created_at")
+        raw_series = df[source_col] if source_col in df.columns else keela_df["Date of Gift"]
+        normalized = raw_series.astype(str).str.replace(r"\s+\(.*\)$", "", regex=True)
+        parsed = pd.to_datetime(
+            normalized,
+            format="%a %b %d %Y %H:%M:%S GMT%z",
+            errors="coerce",
+            utc=True,
+        )
+        needs_fallback = parsed.isna()
+        if needs_fallback.any():
+            fallback_parsed = pd.to_datetime(raw_series[needs_fallback], errors="coerce", utc=True)
+            parsed.loc[needs_fallback] = fallback_parsed
+        eastern = parsed.dt.tz_convert("America/New_York")
+        keela_df["Date of Gift"] = eastern.dt.strftime("%m/%d/%Y").fillna("")
+
+    if "Transaction Item Amount" in keela_df.columns:
+        numeric_amount = pd.to_numeric(keela_df["Transaction Item Amount"], errors="coerce")
+        keela_df["Transaction Item Amount"] = numeric_amount.apply(
+            lambda value: f"{value:.2f}" if pd.notna(value) else ""
+        )
+
+    return keela_df
 
 
 def clean_csv(input_csv: Path, output_dir: Path) -> Path:
     df = pd.read_csv(input_csv)
+    mapping_file_value = os.getenv("FIELD_MAPPING_FILE", "Keela Field Mapping - Sheet1.csv").strip()
+    mapping_csv = Path(mapping_file_value).expanduser()
+    if not mapping_csv.is_absolute():
+        mapping_csv = Path(__file__).resolve().with_name(mapping_file_value)
+
+    df = _build_keela_dataframe(df, mapping_csv)
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cleaned_path = output_dir / f"cleaned_{input_csv.stem}_{run_timestamp}.csv"
     df.to_csv(cleaned_path, index=False)
     return cleaned_path
 
 
-def save_debug_artifacts(driver: webdriver.Chrome, name_prefix: str) -> None:
-    debug_dir = Path("debug")
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    screenshot_path = debug_dir / f"{name_prefix}_{timestamp}.png"
-    html_path = debug_dir / f"{name_prefix}_{timestamp}.html"
-    driver.save_screenshot(str(screenshot_path))
-    html_path.write_text(driver.page_source, encoding="utf-8")
-    print(f"Saved debug screenshot: {screenshot_path}")
-    print(f"Saved debug HTML: {html_path}")
 
 
 def get_drive_service(

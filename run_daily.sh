@@ -11,6 +11,11 @@ ERR_LOG="$LOG_DIR/launchd.err.log"
 SUCCESS_FILE="$LOG_DIR/last_success_date.txt"
 CLEANUP_MARKER="$LOG_DIR/.last_log_cleanup_epoch"
 
+PRIMARY_UTC_HOUR=0
+PRIMARY_UTC_MINUTE=1
+BACKUP_UTC_HOUR=12
+BACKUP_UTC_MINUTE=0
+
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR"
 
@@ -39,8 +44,24 @@ if (( now_epoch - last_cleanup >= cleanup_interval )); then
 fi
 
 today=$(date +%F)
+today_utc=$(date -u +%F)
+
+utc_hour=$(date -u +%H)
+utc_minute=$(date -u +%M)
+if [[ "$MODE" == "primary" ]]; then
+	if [[ "$utc_hour" != "$PRIMARY_UTC_HOUR" || "$utc_minute" != "$PRIMARY_UTC_MINUTE" ]]; then
+		echo "[$(date +"%Y-%m-%d %H:%M:%S")] primary skipped: current UTC time is ${utc_hour}:${utc_minute}, target is ${PRIMARY_UTC_HOUR}:${PRIMARY_UTC_MINUTE}" >> "$LOG_FILE"
+		exit 0
+	fi
+elif [[ "$MODE" == "backup" ]]; then
+	if [[ "$utc_hour" != "$BACKUP_UTC_HOUR" || "$utc_minute" != "$BACKUP_UTC_MINUTE" ]]; then
+		echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup skipped: current UTC time is ${utc_hour}:${utc_minute}, target is ${BACKUP_UTC_HOUR}:${BACKUP_UTC_MINUTE}" >> "$LOG_FILE"
+		exit 0
+	fi
+fi
+
 if [[ "$MODE" == "backup" && -f "$SUCCESS_FILE" ]]; then
-	if [[ "$(cat "$SUCCESS_FILE" 2>/dev/null || true)" == "$today" ]]; then
+	if [[ "$(cat "$SUCCESS_FILE" 2>/dev/null || true)" == "$today_utc" ]]; then
 		echo "[$(date +"%Y-%m-%d %H:%M:%S")] backup skipped: primary already succeeded today" >> "$LOG_FILE"
 		exit 0
 	fi
@@ -54,7 +75,7 @@ exit_code=$?
 set -e
 
 if [[ $exit_code -eq 0 ]]; then
-	echo "$today" > "$SUCCESS_FILE"
+	echo "$today_utc" > "$SUCCESS_FILE"
 	echo "[$(date +"%Y-%m-%d %H:%M:%S")] run succeeded (mode=$MODE)" >> "$LOG_FILE"
 else
 	echo "[$(date +"%Y-%m-%d %H:%M:%S")] run failed with exit code $exit_code (mode=$MODE)" >> "$LOG_FILE"
