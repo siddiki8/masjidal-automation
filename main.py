@@ -24,6 +24,13 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
+EXCLUDED_CAMPAIGN_TITLES = {
+    "Sunday School Fee",
+    "Crescent Academy Fees",
+    "Hifz Academy Fee",
+    "Taekwondo Fee",
+    "Evening School Fees",
+}
 
 
 def get_env(name: str, default: Optional[str] = None) -> str:
@@ -124,22 +131,39 @@ def login_if_needed(driver: webdriver.Chrome, login_url: str, username: str, pas
     time.sleep(2)
 
 
-def navigate_to_donation_page(driver: webdriver.Chrome, donation_url: Optional[str] = None) -> None:
+def navigate_to_donation_page(driver: webdriver.Chrome) -> None:
     timeout_seconds = int(os.getenv("DONATION_PAGE_TIMEOUT", "180"))
     wait = WebDriverWait(driver, 20)
     end_time = time.time() + timeout_seconds
     last_error = None
-    donation_menu_xpath = "/html/body/div[2]/div/div/aside/div[2]/ul/li[3]/ul/li[4]/a"
+    donation_menu_xpaths = [
+        "/html/body/div/div/div/aside/div[2]/ul/li[3]/ul/li[4]/a",
+        "/html/body/div[2]/div/div/aside/div[2]/ul/li[3]/ul/li[4]/a",
+    ]
     donation_date_filter_xpath = "/html/body/div/div/div/main/div/div/div/div[2]/div/select"
 
     while time.time() < end_time:
         try:
             original_handles = set(driver.window_handles)
-            menu_link = wait.until(EC.element_to_be_clickable((By.XPATH, donation_menu_xpath)))
-            menu_link.click()
+            menu_link = None
+            for xpath in donation_menu_xpaths:
+                found = driver.find_elements(By.XPATH, xpath)
+                if found:
+                    menu_link = found[0]
+                    break
+
+            if menu_link is None:
+                raise TimeoutException("Donation menu link not found in sidebar.")
+
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", menu_link)
+            try:
+                wait.until(EC.element_to_be_clickable((By.XPATH, donation_menu_xpaths[0])))
+                menu_link.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", menu_link)
 
             WebDriverWait(driver, 15).until(
-                lambda d: len(d.window_handles) >= len(original_handles)
+                lambda d: len(d.window_handles) > len(original_handles)
             )
             new_handles = [handle for handle in driver.window_handles if handle not in original_handles]
             if new_handles:
@@ -152,19 +176,10 @@ def navigate_to_donation_page(driver: webdriver.Chrome, donation_url: Optional[s
             return
         except Exception as exc:
             last_error = exc
-            if donation_url:
-                try:
-                    driver.get(donation_url)
-                    wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-                    wait.until(EC.presence_of_element_located((By.XPATH, donation_date_filter_xpath)))
-                    return
-                except Exception as fallback_exc:
-                    last_error = fallback_exc
             time.sleep(3)
 
-    detail = donation_url if donation_url else "menu click only"
     raise TimeoutException(
-        f"Failed to navigate to donation page within {timeout_seconds}s using {detail}."
+        f"Failed to navigate to donation page within {timeout_seconds}s via sidebar link click."
     ) from last_error
 
 
@@ -330,6 +345,11 @@ def _build_keela_dataframe(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
 
 def clean_csv(input_csv: Path, output_dir: Path) -> Path:
     df = pd.read_csv(input_csv)
+
+    if "campaign_title" in df.columns:
+        campaign_titles = df["campaign_title"].astype(str).str.strip()
+        df = df.loc[~campaign_titles.isin(EXCLUDED_CAMPAIGN_TITLES)].copy()
+
     mapping_file_value = os.getenv("FIELD_MAPPING_FILE", "Keela Field Mapping - Sheet1.csv").strip()
     mapping_csv = Path(mapping_file_value).expanduser()
     if not mapping_csv.is_absolute():
@@ -425,7 +445,7 @@ def main() -> None:
         else:
             driver.get(login_url)
 
-        navigate_to_donation_page(driver, donation_url)
+        navigate_to_donation_page(driver)
 
         csv_path = download_csv(driver, donation_url, download_dir)
         print(f"Downloaded CSV: {csv_path}")
