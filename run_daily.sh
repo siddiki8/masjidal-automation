@@ -2,7 +2,7 @@
 set -uo pipefail
 
 PROJECT_DIR="/Users/darulislah/Scripts/masjidal_to_drive"
-PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+PYTHON_BIN="/usr/bin/python3"
 LOG_DIR="$PROJECT_DIR/logs"
 MODE="${1:-primary}"
 LOG_FILE="$LOG_DIR/daily_run.log"
@@ -11,10 +11,10 @@ ERR_LOG="$LOG_DIR/launchd.err.log"
 SUCCESS_FILE="$LOG_DIR/last_success_date.txt"
 CLEANUP_MARKER="$LOG_DIR/.last_log_cleanup_epoch"
 
-PRIMARY_UTC_HOUR=0
-PRIMARY_UTC_MINUTE=1
-BACKUP_UTC_HOUR=12
-BACKUP_UTC_MINUTE=0
+PRIMARY_UTC_HOUR="00"
+PRIMARY_UTC_MINUTE="01"
+BACKUP_UTC_HOUR="12"
+BACKUP_UTC_MINUTE="00"
 
 mkdir -p "$LOG_DIR"
 cd "$PROJECT_DIR"
