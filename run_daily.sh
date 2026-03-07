@@ -2,7 +2,7 @@
 set -uo pipefail
 
 PROJECT_DIR="/Users/darulislah/Scripts/masjidal_to_drive"
-PYTHON_BIN="/usr/bin/python3"
+PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 LOG_DIR="$PROJECT_DIR/logs"
 MODE="${1:-primary}"
 LOG_FILE="$LOG_DIR/daily_run.log"
@@ -68,6 +68,8 @@ if [[ "$MODE" == "backup" && -f "$SUCCESS_FILE" ]]; then
 fi
 
 echo "[$(date +"%Y-%m-%d %H:%M:%S")] run started (mode=$MODE)" >> "$LOG_FILE"
+
+source "$PROJECT_DIR/.venv/bin/activate"
 
 set +e
 "$PYTHON_BIN" main.py >> "$LOG_FILE" 2>&1
