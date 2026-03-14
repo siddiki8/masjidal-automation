@@ -24,12 +24,15 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-EXCLUDED_CAMPAIGN_TITLES = {
-    "Sunday School Fee",
-    "Crescent Academy Fees",
-    "Hifz Academy Fee",
-    "Taekwondo Fee",
-    "Evening School Fees",
+
+IMPACT_AREA_MAPPING = {
+    "Ramadan Fund": "Ramadan 2026",
+    "Sadaqa (For the Needy)": "Sadaqa (For the Needy)",
+    "Fitra": "Zakatul Fitr",
+    "Zakat": "Zakat",
+    "DI Services Campaign": "Ramadan 2026",
+    "Masjid Operations": "Masjid Operations",
+    "DI Schools Campaign": "Ramadan 2026",
 }
 
 
@@ -346,9 +349,11 @@ def _build_keela_dataframe(df: pd.DataFrame, mapping_csv: Path) -> pd.DataFrame:
 def clean_csv(input_csv: Path, output_dir: Path) -> Path:
     df = pd.read_csv(input_csv)
 
+    campaign_title_series: Optional[pd.Series] = None
     if "campaign_title" in df.columns:
         campaign_titles = df["campaign_title"].astype(str).str.strip()
-        df = df.loc[~campaign_titles.isin(EXCLUDED_CAMPAIGN_TITLES)].copy()
+        df = df.loc[~campaign_titles.str.contains(r"\bfees?\b", case=False, na=False)].copy()
+        campaign_title_series = df["campaign_title"].astype(str).str.strip()
 
     mapping_file_value = os.getenv("FIELD_MAPPING_FILE", "Keela Field Mapping - Sheet1.csv").strip()
     mapping_csv = Path(mapping_file_value).expanduser()
@@ -356,6 +361,13 @@ def clean_csv(input_csv: Path, output_dir: Path) -> Path:
         mapping_csv = Path(__file__).resolve().with_name(mapping_file_value)
 
     df = _build_keela_dataframe(df, mapping_csv)
+
+    df["Source"] = "Masjidal"
+    if campaign_title_series is not None:
+        df["Impact Area"] = campaign_title_series.map(IMPACT_AREA_MAPPING).fillna("")
+    else:
+        df["Impact Area"] = ""
+
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cleaned_path = output_dir / f"cleaned_{input_csv.stem}_{run_timestamp}.csv"
     df.to_csv(cleaned_path, index=False)
